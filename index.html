@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>GOST / PERIMETR OS — Interactive Demo</title>
+<script>window._vendorOK=false;</script>
+<script src="vendor/pmtiles.js" onerror="void 0"></script>
+<script src="vendor/maplibre-gl.js" onload="window._vendorOK=true" onerror="void 0"></script>
+<link rel="stylesheet" href="vendor/maplibre-gl.css" onerror="void 0">
+<style>
+/* ============================================================
+   GOST / PERIMETR OS v2 — Slate head unit
+   D-pad: ◀▶ tabs · ▲▼ cursor · ● select
+   TV mode: ▲▼ channel · ● pause · HOLD ◀ 5s = exit
+   ============================================================ */
+
+/* ---------- THEMES ---------- */
+:root{ /* GOST — amber engineering standard */
+  --bg:#0c0e0e; --bg2:#101414; --panel:#14191a; --line:#263030; --line2:#33403f;
+  --pri:#ffb000; --pri-dim:#7a5a10; --ok:#4fe38a; --warn:#ff5a3c;
+  --txt:#cfe0da; --dim:#63736e; --glow:rgba(255,176,0,.5);
+  --name:"GOST"; --name-cyr:"ГОСТ";
+}
+.t-perimetr{ --bg:#070609; --bg2:#0d0709; --panel:#150a0d; --line:#351216; --line2:#4d1a20;
+  --pri:#ff2b2b; --pri-dim:#7a1414; --ok:#ff8a3c; --warn:#ffd21a;
+  --txt:#e8cfce; --dim:#7a5457; --glow:rgba(255,43,43,.45);
+  --name:"PERIMETR"; --name-cyr:"ПЕРИМЕТР"; }
+.t-fosfor{ --bg:#050a06; --bg2:#07110a; --panel:#0a150d; --line:#12301c; --line2:#1b4527;
+  --pri:#38ff6e; --pri-dim:#146b2e; --ok:#aaff38; --warn:#ffe03c;
+  --txt:#c9ecd2; --dim:#4e7059; --glow:rgba(56,255,110,.4);
+  --name:"FOSFOR"; --name-cyr:"ФОСФОР"; }
+.t-zarya{ --bg:#05090c; --bg2:#081016; --panel:#0a141c; --line:#123043; --line2:#1a4560;
+  --pri:#35d2ff; --pri-dim:#125a72; --ok:#5affc8; --warn:#ffb03c;
+  --txt:#cfe6ec; --dim:#517080; --glow:rgba(53,210,255,.4);
+  --name:"ZARYA"; --name-cyr:"ЗАРЯ"; }
+.t-sirena{ --bg:#0a0610; --bg2:#120a1c; --panel:#180d24; --line:#33194d; --line2:#4a2570;
+  --pri:#e05aff; --pri-dim:#5f1f75; --ok:#5affe0; --warn:#ffd21a;
+  --txt:#e6d5f0; --dim:#6f5a85; --glow:rgba(224,90,255,.4);
+  --name:"SIRENA"; --name-cyr:"СИРЕНА"; }
+.t-moloko{ --bg:#0a0a0a; --bg2:#101010; --panel:#151515; --line:#2b2b2b; --line2:#3d3d3d;
+  --pri:#f2ede2; --pri-dim:#6e6a60; --ok:#bfe8b0; --warn:#ff6a4a;
+  --txt:#d8d4c8; --dim:#6e6a60; --glow:rgba(242,237,226,.35);
+  --name:"MOLOKO"; --name-cyr:"МОЛОКО"; }
+
+*{box-sizing:border-box; margin:0; padding:0}
+html,body{height:100%; overflow:hidden; background:#000}
+body{font-family:ui-monospace,"Cascadia Mono","DejaVu Sans Mono",Consolas,monospace; color:var(--txt);
+  -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent}
+
+#screen{position:fixed; inset:0; display:flex; flex-direction:column;
+  background:radial-gradient(120% 100% at 50% 0%, var(--bg2), var(--bg) 70%)}
+/* optional CRT curvature (Settings) */
+.crt-curved #screen{border-radius:38px / 30px; overflow:hidden;
+  box-shadow:inset 0 0 90px 24px rgba(0,0,0,.75)}
+#dim-layer{position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; z-index:80}
+
+/* ---------- CRT overlay (cheap: no blend modes, opacity only) ---------- */
+#crt-scan{position:fixed; inset:0; z-index:70; pointer-events:none; opacity:.32;
+  background:repeating-linear-gradient(0deg, rgba(0,0,0,.5) 0 1px, transparent 1px 3px)}
+#crt-vig{position:fixed; inset:0; z-index:71; pointer-events:none;
+  background:radial-gradient(115% 115% at 50% 50%, transparent 60%, rgba(0,0,0,.55) 100%)}
+.nocrt #crt-scan,.nocrt #crt-vig{display:none}
+
+/* pause every animation on inactive views (perf) */
+.view:not(.active) *{animation-play-state:paused !important}
+
+/* ---------- status bar ---------- */
+#statusbar{min-height:34px; flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+  gap:12px; padding:0 12px; border-bottom:1px solid var(--line); white-space:nowrap; overflow:hidden;
+  font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim)}
+.sb-side{display:flex; align-items:center; gap:12px; min-width:0}
+.sb-name{color:var(--pri); font-weight:700; letter-spacing:.24em; flex:0 0 auto}
+.sb-name::before{content:var(--name)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.dot.on{background:var(--ok)}
+#sb-clock{color:var(--txt); letter-spacing:.1em}
+.sb-hide-sm2{}
+
+/* ---------- tab strip ---------- */
+#tabs{flex:0 0 auto; display:flex; gap:2px; padding:6px 8px; border-bottom:1px solid var(--line);
+  overflow-x:auto; scrollbar-width:none}
+#tabs::-webkit-scrollbar{display:none}
+.tab{flex:0 0 auto; padding:7px 14px; font-size:11px; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--dim); border:1px solid transparent; cursor:pointer}
+.tab.on{color:var(--pri); border-color:var(--line2); background:var(--panel)}
+
+/* ---------- stage ---------- */
+#stage{flex:1 1 auto; position:relative; overflow:hidden}
+.view{position:absolute; inset:0; padding:16px 20px; opacity:0; visibility:hidden; overflow:auto}
+.view.active{opacity:1; visibility:visible}
+.eyebrow{font-size:11px; letter-spacing:.32em; color:var(--dim); text-transform:uppercase;
+  display:flex; align-items:center; gap:10px; margin-bottom:10px}
+.eyebrow b{color:var(--pri)}
+.eyebrow .rule{flex:1; height:1px; background:var(--line2)}
+[data-focus].focused{border-color:var(--pri)!important; box-shadow:0 0 0 1px var(--pri); color:var(--pri)}
+
+/* ---------- HOME: Half-Life style menu ---------- */
+#v-home{display:flex; flex-direction:column; justify-content:center; padding-left:8vw}
+.hl-title{font-size:12px; letter-spacing:.5em; color:var(--dim); text-transform:uppercase; margin-bottom:26px}
+.hl-title b{color:var(--pri)}
+.hl-menu{display:flex; flex-direction:column; gap:2px; max-width:520px}
+.hl-item{font-family:"Arial Narrow","Roboto Condensed","Liberation Sans Narrow",system-ui,sans-serif;
+  font-stretch:condensed; font-size:34px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+  color:var(--dim); padding:6px 14px; border:1px solid transparent; cursor:pointer; line-height:1.15}
+.hl-item.focused,.hl-item:hover{color:var(--pri); border-color:transparent!important; box-shadow:none!important;
+  padding-left:30px; text-shadow:0 0 14px var(--glow)}
+.hl-item.focused::before{content:"▸ "; }
+.hl-item small{display:block; font-family:ui-monospace,monospace; font-size:10px; font-weight:400;
+  letter-spacing:.2em; color:var(--dim); margin-top:1px}
+.hl-foot{position:absolute; bottom:16px; left:8vw; font-size:10px; letter-spacing:.24em; color:var(--dim); text-transform:uppercase}
+
+/* ---------- DRIVE ---------- */
+#v-drive .grid{display:grid; grid-template-columns:1fr 1.5fr 1fr; gap:14px}
+.panel{background:var(--panel); border:1px solid var(--line); position:relative; padding:14px 16px}
+.panel::before{content:""; position:absolute; top:-1px; left:-1px; width:12px; height:12px;
+  border-top:2px solid var(--pri); border-left:2px solid var(--pri); opacity:.7}
+.p-label{font-size:10px; letter-spacing:.26em; color:var(--dim); text-transform:uppercase}
+.big{font-size:56px; font-weight:700; color:var(--pri); letter-spacing:-.02em; font-variant-numeric:tabular-nums}
+.unit{font-size:13px; color:var(--dim); letter-spacing:.2em; margin-left:6px}
+.mid{font-size:32px; font-weight:700; color:var(--txt); font-variant-numeric:tabular-nums}
+.row{display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px dashed var(--line)}
+.row:last-child{border-bottom:none}
+.row .k{font-size:11px; letter-spacing:.16em; color:var(--dim); text-transform:uppercase}
+.row .val{font-size:17px; font-variant-numeric:tabular-nums}
+.row .val small{font-size:11px; color:var(--dim); margin-left:4px}
+.center-col{display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding-top:24px}
+.gear{position:absolute; top:12px; right:14px; font-size:20px; font-weight:800; color:var(--pri)}
+.mode-tag{position:absolute; top:14px; left:14px; font-size:10px; letter-spacing:.26em; color:var(--dim)}
+.speed{font-size:104px; font-weight:800; line-height:.9; letter-spacing:-.03em; font-variant-numeric:tabular-nums}
+.speed-u{font-size:12px; letter-spacing:.4em; color:var(--dim)}
+.batt-track{height:15px; border:1px solid var(--line2); background:#000; position:relative; overflow:hidden; margin-top:12px}
+.batt-fill{position:absolute; inset:0; width:0%; background:var(--pri)}
+.pm-track{height:20px; border:1px solid var(--line2); background:#000; position:relative; margin-top:10px; width:100%}
+.pm-zero{position:absolute; left:35%; top:0; bottom:0; width:1px; background:var(--line2)}
+.pm-bar{position:absolute; top:2px; bottom:2px; left:35%; width:0; background:var(--pri)}
+.pm-bar.regen{background:var(--ok)}
+.pm-scale{display:flex; justify-content:space-between; font-size:9px; color:var(--dim); margin-top:3px; width:100%}
+/* not-connected overlay */
+#nolink{position:absolute; inset:0; background:rgba(0,0,0,.82); display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:14px; text-align:center; padding:30px; z-index:5}
+#nolink.hide{display:none}
+#nolink .nl-big{font-size:30px; font-weight:800; letter-spacing:.3em; color:var(--warn); text-transform:uppercase}
+#nolink .nl-sub{font-size:12px; letter-spacing:.14em; color:var(--txt); line-height:2; max-width:560px; text-transform:uppercase}
+#nolink .nl-hint{font-size:10px; letter-spacing:.2em; color:var(--dim); text-transform:uppercase}
+
+/* ---------- TV ---------- */
+.tv-list{display:flex; flex-direction:column; gap:6px}
+.tv-ch{display:flex; align-items:center; gap:16px; border:1px solid var(--line2); background:var(--panel);
+  padding:12px 16px; cursor:pointer}
+.tv-ch .cn{font-size:24px; font-weight:800; color:var(--pri); width:52px; font-variant-numeric:tabular-nums}
+.tv-ch .cname{flex:1; font-size:14px; letter-spacing:.14em; text-transform:uppercase}
+.tv-ch .cmeta{font-size:10px; color:var(--dim); letter-spacing:.1em}
+.tv-note{margin-top:12px; font-size:10px; letter-spacing:.14em; color:var(--dim); line-height:2; text-transform:uppercase}
+
+/* TV fullscreen player */
+#tv{position:fixed; inset:0; z-index:60; background:#000; display:none}
+#tv.on{display:block}
+#tv video,#tv canvas{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000}
+/* channel OSD */
+#osd-ch{position:fixed; top:26px; right:40px; z-index:75; font-size:88px; font-weight:800; color:var(--pri);
+  text-shadow:0 0 22px var(--glow); font-variant-numeric:tabular-nums; opacity:0; transition:opacity .3s; pointer-events:none}
+#osd-ch small{display:block; font-size:13px; letter-spacing:.34em; color:var(--txt); text-align:right; font-weight:400}
+#osd-ch.show{opacity:1}
+/* volume OSD — old CRT half-step bar */
+#osd-vol{position:fixed; left:50%; bottom:12vh; transform:translateX(-50%); z-index:76; opacity:0;
+  transition:opacity .25s; pointer-events:none; text-align:left}
+#osd-vol.show{opacity:1}
+#osd-vol .vlabel{font-size:14px; letter-spacing:.4em; color:var(--pri); text-shadow:0 0 12px var(--glow); margin-bottom:8px}
+.vbar{display:flex; gap:5px}
+.vseg{width:16px; height:26px; border:1px solid var(--pri-dim); position:relative; background:rgba(0,0,0,.5)}
+.vseg i{position:absolute; left:0; top:0; bottom:0; width:0; background:var(--pri); box-shadow:0 0 8px var(--glow)}
+.vseg.full i{width:100%} .vseg.half i{width:50%}
+
+/* ---------- GUIDE ---------- */
+.guide-wrap{overflow:auto}
+.gtable{display:grid; grid-template-columns:90px repeat(7,1fr); gap:4px; min-width:640px}
+.gcell{border:1px solid var(--line2); background:var(--panel); padding:10px 6px; text-align:center;
+  font-size:11px; letter-spacing:.1em; cursor:pointer; min-height:44px; display:flex; align-items:center; justify-content:center}
+.ghead{border-color:transparent; background:transparent; color:var(--dim); text-transform:uppercase; font-size:10px; letter-spacing:.2em}
+.gslot{color:var(--dim); text-transform:uppercase; font-size:10px; border-color:transparent; background:transparent; justify-content:flex-start}
+.gcell.setch{color:var(--pri); font-weight:700}
+.guide-note{margin-top:10px; font-size:10px; color:var(--dim); letter-spacing:.14em; text-transform:uppercase; line-height:2}
+
+/* ---------- NAV ---------- */
+#v-nav{padding:0}
+#map{position:absolute; inset:0}
+.nav-fallback{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:12px; text-align:center; padding:30px; background:
+  linear-gradient(transparent 49.6%, var(--line) 49.6%, var(--line) 50.4%, transparent 50.4%),
+  linear-gradient(90deg, transparent 49.6%, var(--line) 49.6%, var(--line) 50.4%, transparent 50.4%),
+  var(--bg)}
+.nav-fallback .nf-big{font-size:22px; font-weight:800; letter-spacing:.3em; color:var(--pri); text-transform:uppercase}
+.nav-fallback .nf-sub{font-size:11px; color:var(--txt); letter-spacing:.12em; line-height:2; max-width:600px; text-transform:uppercase}
+.nav-hud{position:absolute; top:12px; left:12px; z-index:6; background:rgba(0,0,0,.6); border:1px solid var(--line2);
+  padding:8px 12px; font-size:10px; letter-spacing:.18em; color:var(--dim); text-transform:uppercase}
+.nav-hud b{color:var(--pri)}
+
+/* ---------- SETTINGS ---------- */
+.set-list{display:flex; flex-direction:column; gap:6px}
+.set-row{display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line2);
+  background:var(--panel); padding:12px 16px; cursor:pointer; gap:14px}
+.set-row .sk{font-size:13px; letter-spacing:.12em; text-transform:uppercase}
+.set-row .sd{font-size:10px; letter-spacing:.1em; color:var(--dim); margin-top:2px}
+.set-row .sv{font-size:13px; letter-spacing:.14em; color:var(--pri); font-variant-numeric:tabular-nums; text-align:right; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+
+
+/* programmer */
+.prog-days{display:flex; gap:5px; margin-bottom:10px; flex-wrap:wrap}
+.pday{border:1px solid var(--line2); padding:7px 12px; font-size:11px; letter-spacing:.16em; cursor:pointer; color:var(--dim)}
+.pday.on{color:var(--pri); border-color:var(--pri)}
+.prog-free{font-size:10px; letter-spacing:.2em; color:var(--pri); margin-bottom:10px; text-transform:uppercase}
+.osk .key.taken{opacity:.28; pointer-events:none}
+/* wifi list + OSK */
+#panel-modal{position:fixed; inset:0; z-index:85; background:rgba(0,0,0,.85); display:none;
+  flex-direction:column; align-items:center; justify-content:center; padding:24px}
+#panel-modal.on{display:flex}
+.modal-box{width:min(680px,94vw); max-height:84vh; overflow:auto; background:var(--bg2); border:1px solid var(--line2); padding:18px}
+.modal-title{font-size:12px; letter-spacing:.3em; color:var(--pri); text-transform:uppercase; margin-bottom:12px}
+.osk{display:grid; grid-template-columns:repeat(11,1fr); gap:5px; margin-top:12px}
+.osk .key{border:1px solid var(--line2); background:var(--panel); text-align:center; padding:10px 0;
+  font-size:14px; cursor:pointer; text-transform:none}
+.osk .key.wide{grid-column:span 3}
+.osk-out{border:1px solid var(--line2); background:#000; padding:10px 12px; font-size:16px; letter-spacing:.14em; min-height:40px}
+
+/* ---------- hardware strip (auto-hides on real hardware) ---------- */
+#hw{flex:0 0 auto; height:104px; border-top:1px solid var(--line); display:flex; align-items:stretch;
+  padding:8px 12px; gap:12px; background:var(--panel)}
+.hwhide #hw{display:none}
+.dpad{flex:0 0 auto; display:grid; grid-template-columns:repeat(3,44px); grid-template-rows:repeat(3,1fr); gap:4px}
+.dk{border:1px solid var(--line2); background:var(--bg2); color:var(--pri); display:flex; align-items:center;
+  justify-content:center; font-size:16px; cursor:pointer; touch-action:manipulation}
+.dk:active,.dk.press{border-color:var(--pri)}
+.dk.up{grid-column:2;grid-row:1}.dk.left{grid-column:1;grid-row:2}.dk.enter{grid-column:2;grid-row:2;color:var(--txt)}
+.dk.right{grid-column:3;grid-row:2}.dk.down{grid-column:2;grid-row:3}
+.dlegend{flex:1; display:flex; flex-direction:column; justify-content:center; gap:4px; min-width:0}
+.dlegend div{font-size:9px; letter-spacing:.14em; color:var(--dim); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.dlegend b{color:var(--pri)}
+.knob{width:96px; flex:0 0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:4px; border:1px solid var(--line2); background:var(--bg2); cursor:ns-resize; touch-action:none; padding:7px 0}
+.knob .kn{font-size:9px; color:var(--dim); letter-spacing:.2em}
+.dial{width:40px; height:40px; border-radius:50%; border:2px solid var(--line2); position:relative; background:#000}
+.dial .tick{position:absolute; top:3px; left:50%; width:2px; height:10px; background:var(--pri); transform-origin:50% 17px; transform:translateX(-50%)}
+.knob .kval{font-size:12px; color:var(--pri); font-variant-numeric:tabular-nums}
+
+/* ---------- boot ---------- */
+#boot{position:fixed; inset:0; z-index:90; background:#000; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:20px; transition:opacity .5s}
+#boot.gone{opacity:0; pointer-events:none}
+.boot-mark{font-size:54px; font-weight:800; letter-spacing:.4em; color:var(--pri); text-shadow:0 0 24px var(--glow);
+  padding-left:.4em; opacity:0; animation:bf 1s .2s forwards}
+.boot-mark::after{content:var(--name)}
+.boot-cyr{font-size:14px; letter-spacing:.55em; color:var(--dim); opacity:0; animation:bf 1s .6s forwards}
+.boot-cyr::after{content:var(--name-cyr)}
+.boot-sub{font-size:10px; letter-spacing:.36em; color:var(--pri-dim); margin-top:14px; opacity:0; animation:bf 1s 1s forwards; text-transform:uppercase}
+@keyframes bf{to{opacity:1}}
+.boot-lines{font-size:11px; letter-spacing:.12em; color:var(--dim); width:min(360px,80vw); min-height:90px}
+.boot-lines .ok{color:var(--ok)}
+
+#toast{position:fixed; bottom:118px; left:50%; transform:translateX(-50%); z-index:82; font-size:10px;
+  letter-spacing:.14em; color:var(--txt); background:rgba(0,0,0,.75); padding:7px 13px; border:1px solid var(--line2);
+  text-transform:uppercase; opacity:0; transition:opacity .3s; text-align:center; max-width:88vw}
+#toast.show{opacity:1}
+
+@media (max-width:820px){
+  .sb-hide-sm{display:none}
+  #v-drive .grid{grid-template-columns:1fr; gap:10px}
+  .speed{font-size:72px} .big{font-size:44px}
+  .hl-item{font-size:26px}
+  .dlegend{display:none} .knob{width:74px}
+}
+</style>
+</head>
+<body class="t-gost">
+<div id="screen">
+  <div id="statusbar">
+    <div class="sb-side">
+      <span class="sb-name"></span>
+      <span style="display:flex;align-items:center;gap:7px"><span class="dot" id="sb-dot"></span><span id="sb-link" class="sb-hide-sm">NOT CONNECTED</span></span>
+      <span id="sb-net" class="sb-hide-sm">NET —</span>
+    </div>
+    <div class="sb-side">
+      <span id="sb-gps" class="sb-hide-sm">GPS —</span>
+      <span id="sb-clock">--:--</span>
+    </div>
+  </div>
+
+  <div id="tabs"></div>
+
+  <div id="stage">
+
+    <!-- HOME (HL-style) -->
+    <section id="v-home" class="view">
+      <div class="hl-title"><b></b>BLANK SLATE SYSTEMS</div>
+      <div class="hl-menu" id="hl-menu"></div>
+      <div class="hl-foot" id="hl-foot">GOST OS v2.0 · OFFLINE FIRST · 0 CLOUD</div>
+    </section>
+
+    <!-- DRIVE -->
+    <section id="v-drive" class="view">
+      <div class="eyebrow"><b>01</b> DRIVE <span class="rule"></span><span id="d-srcline">SOURCE // —</span></div>
+      <div class="grid" style="position:relative">
+        <div class="panel">
+          <span class="p-label">State of charge</span>
+          <div><span class="big" id="d-soc">—</span><span class="unit">%</span></div>
+          <div class="batt-track"><div class="batt-fill" id="d-battfill"></div></div>
+          <div style="margin-top:12px">
+            <div class="row"><span class="k">Range</span><span class="val"><span id="d-range">—</span><small>MI</small></span></div>
+            <div class="row"><span class="k">Energy</span><span class="val"><span id="d-kwh">—</span><small>KWH</small></span></div>
+            <div class="row"><span class="k">Fuel/Batt</span><span class="val"><span id="d-fuel">—</span><small>%</small></span></div>
+          </div>
+        </div>
+        <div class="panel center-col">
+          <span class="mode-tag" id="d-mode">MODE // —</span><span class="gear" id="d-gear">—</span>
+          <div class="speed" id="d-speed">—</div><div class="speed-u">MPH</div>
+          <div class="pm-track"><div class="pm-zero"></div><div class="pm-bar" id="d-pmbar"></div></div>
+          <div class="pm-scale"><span>REGEN</span><span>0</span><span>PWR</span></div>
+        </div>
+        <div class="panel">
+          <span class="p-label">Power</span>
+          <div><span class="mid" id="d-pwr">—</span><span class="unit">KW</span></div>
+          <div style="margin-top:12px">
+            <div class="row"><span class="k">RPM</span><span class="val"><span id="d-rpm">—</span></span></div>
+            <div class="row"><span class="k">Motor/Cool</span><span class="val"><span id="d-mtemp">—</span><small>°C</small></span></div>
+            <div class="row"><span class="k">Pack</span><span class="val"><span id="d-ptemp">—</span><small>°C</small></span></div>
+          </div>
+        </div>
+        <div id="nolink">
+          <div class="nl-big">⚠ Not Connected</div>
+          <div class="nl-sub">No vehicle data source detected.<br>
+            Plug an OBD-II USB adapter into the unit, or pair the vehicle's telematics<br>
+            in SETTINGS → NETWORK. For a showroom demo, set DATA SOURCE → DEMO.</div>
+          <div class="nl-hint">Live values will appear automatically when a source connects</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TV -->
+    <section id="v-tv" class="view">
+      <div class="eyebrow"><b>02</b> CHANNELS <span class="rule"></span><span id="tv-srcline">SD:/TV · USB</span></div>
+      <div class="tv-list" id="tv-list"></div>
+      <div class="tv-note">▲▼ while watching = channel up/down · ● = pause · hold ◀ 5 sec = exit ·
+        add folders named "07 CARTOONS" under TV/ — each folder is a channel (3–83)</div>
+    </section>
+
+    <!-- GUIDE -->
+    <section id="v-guide" class="view">
+      <div class="eyebrow"><b>03</b> TV GUIDE <span class="rule"></span><span id="g-clock">—</span></div>
+      <div class="tv-list" id="g-chlist"></div>
+      <div class="guide-note">Pick a channel and press ● to program its broadcast day — Sunday to Saturday,
+        24 hours each. Blocks start on the half hour; a 2H30M video uses 2H30M of the day's 24H.
+        Tuning in mid-block joins the show in progress, like real TV. Gaps = static.</div>
+    </section>
+
+    <!-- NAV -->
+    <section id="v-nav" class="view">
+      <div id="map"></div>
+      <div class="nav-fallback" id="nav-fallback">
+        <div class="nf-big">No Map Data</div>
+        <div class="nf-sub">Drop a region file (.pmtiles) into <b>maps/</b> on the SD card or a USB stick —
+          free worldwide extracts at protomaps.com/downloads — then reopen NAV.<br>
+          With Wi-Fi connected, SETTINGS → UPDATE MAPS fetches the latest region file automatically.</div>
+        <div class="nl-hint" id="nav-gpsline">GPS: searching…</div>
+      </div>
+      <div class="nav-hud" id="nav-hud" style="display:none"><b id="nh-mode">BROWSE</b> · ● map mode: ▲▼◀▶ pan · ● zoom · hold ◀ exit · <span id="nh-gps">GPS —</span></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="v-settings" class="view">
+      <div class="eyebrow"><b>04</b> SETTINGS <span class="rule"></span><span>SYSTEM</span></div>
+      <div class="set-list" id="set-list"></div>
+    </section>
+
+  </div>
+
+  <div id="hw">
+    <div class="dpad">
+      <div class="dk up" data-dk="up">▲</div><div class="dk left" data-dk="left">◀</div>
+      <div class="dk enter" data-dk="enter">●</div><div class="dk right" data-dk="right">▶</div>
+      <div class="dk down" data-dk="down">▼</div>
+    </div>
+    <div class="dlegend">
+      <div><b>◀ ▶</b> tab · <b>▲ ▼</b> cursor · <b>●</b> select</div>
+      <div>TV: <b>▲▼</b> channel · hold <b>◀</b> 5s exit</div>
+      <div>on-screen controls hide when hardware is detected</div>
+    </div>
+    <div class="knob" id="knob-vol"><span class="kn">VOL</span><div class="dial"><div class="tick" id="tick-vol"></div></div><span class="kval" id="kv-vol">60</span></div>
+    <div class="knob" id="knob-brt"><span class="kn">BRT</span><div class="dial"><div class="tick" id="tick-brt"></div></div><span class="kval" id="kv-brt">85</span></div>
+  </div>
+</div>
+
+<!-- TV fullscreen -->
+<div id="tv"><canvas id="tv-canvas"></canvas><video id="tv-video" style="display:none"></video></div>
+
+<!-- OSDs -->
+<div id="osd-ch"><span id="osd-ch-n">00</span><small id="osd-ch-name">—</small></div>
+<div id="osd-vol"><div class="vlabel">VOLUME</div><div class="vbar" id="vbar"></div></div>
+
+<!-- modal (wifi / osk / pickers) -->
+<div id="panel-modal"><div class="modal-box" id="modal-box"></div></div>
+
+<div id="dim-layer"></div><div id="crt-scan"></div><div id="crt-vig"></div>
+<div id="toast"></div>
+
+<div id="boot">
+  <div style="text-align:center">
+    <div class="boot-mark"></div><div class="boot-cyr"></div>
+    <div class="boot-sub">SLATE HEAD-UNIT OS · INTERACTIVE DEMO</div>
+  </div>
+  <div class="boot-lines" id="boot-lines"></div>
+</div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const store={get(k,d){try{const v=localStorage.getItem('gost:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},
+             set(k,v){try{localStorage.setItem('gost:'+k,JSON.stringify(v))}catch(e){}}};
+
+/* ================= state ================= */
+const THEMES=['gost','perimetr','fosfor','zarya','sirena','moloko'];
+const state={
+  theme:store.get('theme','gost'), crt:store.get('crt',true), curved:store.get('curved',false),
+  vol:store.get('vol',60), brt:store.get('brt',85), srcmode:store.get('srcmode','demo'), // auto|demo
+  tabIndex:0, focusIdx:0, backend:false, hwControls:false,
+  tvOn:false, tvCh:null, mapMode:false,
+};
+const TABS=[{id:'home',n:'HOME'},{id:'drive',n:'DRIVE'},{id:'tv',n:'TV'},{id:'guide',n:'GUIDE'},{id:'nav',n:'NAV'},{id:'settings',n:'SETTINGS'}];
+const tele={speed:null,soc:null,pwr:null,rpm:null,mtemp:null,ptemp:null,fuel:null,gear:null,source:'none'};
+let gps={fix:false,lat:null,lon:null,sats:0,speed:null};
+
+/* ================= helpers ================= */
+function toast(t,ms=2200){const e=$('#toast'); e.textContent=t; e.classList.add('show');
+  clearTimeout(toast._t); toast._t=setTimeout(()=>e.classList.remove('show'),ms);}
+function setTheme(n){document.body.className='t-'+n+(state.crt?'':' nocrt')+(state.curved?' crt-curved':'')+(state.hwControls?' hwhide':'');
+  state.theme=n; store.set('theme',n); renderSettings();}
+function applyBodyFlags(){setTheme(state.theme);}
+function tickClock(){$('#sb-clock').textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+setInterval(tickClock,1000); tickClock();
+
+/* ================= tabs & focus ================= */
+function buildTabs(){const el=$('#tabs'); el.innerHTML='';
+  TABS.forEach((t,i)=>{const d=document.createElement('div'); d.className='tab'; d.textContent=t.n;
+    d.onclick=()=>setTab(i); el.appendChild(d);});}
+function focusables(){const v=$('.view.active'); return v?[...v.querySelectorAll('[data-focus]')].filter(e=>e.offsetParent!==null):[];}
+function applyFocus(){const f=focusables(); if(state.focusIdx>=f.length)state.focusIdx=Math.max(0,f.length-1);
+  f.forEach((e,i)=>e.classList.toggle('focused',i===state.focusIdx));
+  const c=f[state.focusIdx]; if(c)c.scrollIntoView({block:'nearest'});}
+function setTab(i){state.tabIndex=(i%TABS.length+TABS.length)%TABS.length;
+  const id='v-'+TABS[state.tabIndex].id;
+  $$('.view').forEach(v=>v.classList.toggle('active',v.id===id));
+  $$('#tabs .tab').forEach((t,ti)=>t.classList.toggle('on',ti===state.tabIndex));
+  state.focusIdx=0; applyFocus();
+  if(id==='v-nav') navShown();
+  if(id==='v-guide') buildGuide();
+  if(id==='v-tv') renderTVList();
+}
+
+/* ================= HOME (HL menu) ================= */
+const HL=[
+  {l:'Channels', s:'retro tv · your video library', act:'goto:tv'},
+  {l:'Drive',    s:'live vehicle telemetry',        act:'goto:drive'},
+  {l:'TV Guide', s:'sunday–saturday schedule',      act:'goto:guide'},
+  {l:'Navigation',s:'offline vector maps',          act:'goto:nav'},
+  {l:'YouTube',  s:'requires wi-fi · hold ◀ to return', act:'yt'},
+  {l:'Lookup',   s:'web search · requires wi-fi',   act:'browse'},
+  {l:'Settings', s:'themes · network · updates',    act:'goto:settings'},
+];
+function buildHome(){const m=$('#hl-menu'); m.innerHTML='';
+  HL.forEach(it=>{const d=document.createElement('div'); d.className='hl-item'; d.setAttribute('data-focus','');
+    d.dataset.act=it.act; d.innerHTML=it.l+'<small>'+it.s+'</small>'; d.onclick=()=>activate(d); m.appendChild(d);});}
+
+/* ================= TV channels ================= */
+/* Fixed dial: every channel 03–82 exists (like a real tuner); 83 = YOUTUBE.
+   kinds: 'files' (user content) · 'app' (ch83) · built-ins on 03/04 until used.
+   items:[{name,src?,dur?}] dur = minutes */
+let channels=[];
+function defaultChannels(){
+  const dial=[];
+  for(let n=3;n<=82;n++) dial.push({num:n, name:'CH '+String(n).padStart(2,'0'), kind:'files', items:[]});
+  dial.push({num:83, name:'YOUTUBE', kind:'app', items:[]});
+  return dial;
+}
+channels=defaultChannels();
+function chByNum(n){return channels.find(c=>c.num===n);}
+function chSorted(){return [...channels].sort((a,b)=>a.num-b.num);}
+function schedFor(num){const g=store.get('guide3',{}); return g[num]||{};}
+function schedMinToday(num){const d=['sun','mon','tue','wed','thu','fri','sat'][new Date().getDay()];
+  return (schedFor(num)[d]||[]).reduce((a,b)=>a+(b.d||0),0);}
+function renderTVList(){
+  const el=$('#tv-list'); el.innerHTML='';
+  chSorted().forEach(c=>{const d=document.createElement('div'); d.className='tv-ch'; d.setAttribute('data-focus','');
+    d.dataset.act='tune:'+c.num; d.dataset.num=c.num;
+    const has=c.items.length>0, sm=schedMinToday(c.num);
+    if(!has&&c.kind==='files'&&!sm) d.style.opacity=.45;
+    const meta=c.kind==='app'?'APP · WI-FI':
+      (has?c.items.length+' FILES':'EMPTY · ● ADD')+(sm?(' · '+(sm/60).toFixed(1)+'H TODAY'):'');
+    d.innerHTML=`<span class="cn">${String(c.num).padStart(2,'0')}</span><span class="cname">${c.name}</span>
+      <span class="cmeta">${meta}</span>`;
+    d.onclick=()=>activate(d); el.appendChild(d);});
+}
+const fileInput=document.createElement('input'); fileInput.type='file'; fileInput.accept='video/*'; fileInput.multiple=true;
+fileInput.style.display='none'; document.body.appendChild(fileInput);
+let addTarget=null;
+function probeDur(item){ // read duration (minutes) for scheduling
+  return new Promise(res=>{const v=document.createElement('video'); v.preload='metadata'; v.src=item.src;
+    v.onloadedmetadata=()=>{item.dur=Math.max(1,Math.round(v.duration/60)); v.src=''; res(item);};
+    v.onerror=()=>{item.dur=30; res(item);};});}
+fileInput.onchange=async e=>{const c=chByNum(addTarget||3); if(!c)return;
+  const items=[...e.target.files].map(f=>({name:f.name,src:URL.createObjectURL(f)}));
+  for(const it of items) await probeDur(it);
+  c.items.push(...items); if(c.name.startsWith('CH '))c.name='CH '+String(c.num).padStart(2,'0');
+  fileInput.value=''; renderTVList(); toast(c.items.length+' FILE(S) ON CH '+String(c.num).padStart(2,'0'));};
+
+/* ---- tuning ---- */
+const tvVideo=$('#tv-video'), tvCanvas=$('#tv-canvas');
+let canvasAnim=null;
+function stopCanvas(){if(canvasAnim){cancelAnimationFrame(canvasAnim); canvasAnim=null;}
+  tvCanvas.style.display='none';}
+function stopVideo(){tvVideo.pause(); tvVideo.removeAttribute('src'); tvVideo.load(); tvVideo.style.display='none';}
+function currentSlotChannel(){return 3;} /* legacy shim (guide3 replaces slots) */
+const DAYK=['sun','mon','tue','wed','thu','fri','sat'];
+function nowBlock(num){ // find scheduled block containing "now" → {file,offsetSec} | null
+  const d=DAYK[new Date().getDay()], blocks=(schedFor(num)[d]||[]).slice().sort((a,b)=>a.s-b.s);
+  const now=new Date(), nowSec=now.getHours()*3600+now.getMinutes()*60+now.getSeconds();
+  for(const b of blocks){const s=b.s*60, e=s+b.d*60;
+    if(nowSec>=s&&nowSec<e) return {name:b.f, offset:nowSec-s, endsIn:e-nowSec};}
+  return null;
+}
+let offairTimer=null, staticNoise=false;
+function tune(num,dir=0){
+  const list=chSorted();
+  let c=chByNum(num);
+  if(!c){ if(dir>0)c=list.find(x=>x.num>num)||list[0];
+    else if(dir<0)c=[...list].reverse().find(x=>x.num<num)||list[list.length-1];
+    else c=list[0]; }
+  clearTimeout(offairTimer); staticNoise=false;
+  state.tvOn=true; state.tvCh=c.num;
+  $('#tv').classList.add('on');
+  stopCanvas(); stopVideo();
+  showChOSD(c.num, c.name);
+  if(c.kind==='app'){ // CH 83 — YouTube as a channel
+    setTimeout(()=>{actions.yt(); },600); drawCard('CH 83','YOUTUBE · HOLD ◀ 5s TO COME BACK'); return; }
+  if(state.backend){ send({type:'tv_play', num:c.num}); return; }
+  /* ---- standalone playback ---- */
+  const blk=nowBlock(c.num);
+  if(blk){ const it=c.items.find(i=>i.name===blk.name);
+    if(it){ playFileAt(it, blk.offset, ()=>tune(c.num)); return; } }
+  if(c.items.length){ // no schedule → continuous pseudo-broadcast, joined mid-stream
+    const totalMin=c.items.reduce((a,i)=>a+(i.dur||30),0);
+    let t=Math.floor(Date.now()/1000/60)%totalMin, idx=0;
+    while(t>=(c.items[idx].dur||30)){t-=(c.items[idx].dur||30); idx=(idx+1)%c.items.length;}
+    playFileAt(c.items[idx], t*60, ()=>{ // roll to next like broadcast
+      const n=(idx+1)%c.items.length; playFileAt(c.items[n],0,()=>tune(c.num)); });
+    return; }
+  // nothing on this channel right now → static (off air)
+  drawStatic(true);
+  offairTimer=setTimeout(()=>{ if(state.tvOn&&state.tvCh===c.num)tune(c.num); },30000); // re-check schedule
+}
+function playFileAt(item, offsetSec, onEnd){
+  stopCanvas(); tvVideo.style.display='block'; tvVideo.src=item.src; tvVideo.volume=state.vol/100;
+  tvVideo.onloadedmetadata=()=>{ try{ if(offsetSec>1&&offsetSec<tvVideo.duration-1)tvVideo.currentTime=offsetSec; }catch(e){} };
+  tvVideo.onended=onEnd||null;
+  tvVideo.play().catch(()=>{});
+}
+function tvExit(){state.tvOn=false; clearTimeout(offairTimer); $('#tv').classList.remove('on'); stopCanvas(); stopVideo();
+  if(state.backend) send({type:'tv_stop'}); }
+function chStep(d){ if(!state.tvOn)return;
+  const nums=chSorted().map(c=>c.num); let i=nums.indexOf(state.tvCh||3);
+  if(i<0)i=0; i=(i+d+nums.length)%nums.length;   // wrap 83→03 and 03→83 like a real dial
+  tune(nums[i], d); }
+/* built-in demo channels (only animate while visible) */
+function fitCanvas(){tvCanvas.width=innerWidth; tvCanvas.height=innerHeight;}
+function drawBars(){fitCanvas(); tvCanvas.style.display='block'; const x=tvCanvas.getContext('2d');
+  const cols=['#c0c0c0','#c0c000','#00c0c0','#00c000','#c000c0','#c00000','#0000c0'];
+  const w=tvCanvas.width/cols.length;
+  cols.forEach((c,i)=>{x.fillStyle=c; x.fillRect(i*w,0,w+1,tvCanvas.height*0.75);});
+  x.fillStyle='#111'; x.fillRect(0,tvCanvas.height*0.75,tvCanvas.width,tvCanvas.height*0.25);
+  x.fillStyle='#fff'; x.font='700 28px monospace'; x.fillText('GOST · TEST PATTERN · CH 03', 40, tvCanvas.height*0.88);}
+function drawStatic(offair){fitCanvas(); tvCanvas.style.display='block'; staticNoise=true;
+  const x=tvCanvas.getContext('2d');
+  const iw=Math.floor(tvCanvas.width/3), ih=Math.floor(tvCanvas.height/3);
+  const img=x.createImageData(iw,ih); let last=0;
+  const step=t=>{ if(!state.tvOn||!staticNoise){return;}
+    if(t-last>66){last=t; const d=img.data;
+      for(let i=0;i<d.length;i+=4){const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;}
+      x.putImageData(img,0,0); x.imageSmoothingEnabled=false;
+      x.drawImage(tvCanvas,0,0,iw,ih,0,0,tvCanvas.width,tvCanvas.height);}
+    canvasAnim=requestAnimationFrame(step); };
+  canvasAnim=requestAnimationFrame(step);}
+function drawCard(t1,t2){fitCanvas(); tvCanvas.style.display='block'; const x=tvCanvas.getContext('2d');
+  x.fillStyle='#000'; x.fillRect(0,0,tvCanvas.width,tvCanvas.height);
+  x.fillStyle=getComputedStyle(document.body).getPropertyValue('--pri'); x.font='800 64px monospace';
+  x.fillText(t1,60,tvCanvas.height/2-20); x.font='400 20px monospace'; x.fillStyle='#888'; x.fillText(t2,62,tvCanvas.height/2+30);}
+
+/* ---- channel OSD (amber, ~5s) ---- */
+function showChOSD(num,name){$('#osd-ch-n').textContent=String(num).padStart(2,'0');
+  $('#osd-ch-name').textContent=name; const e=$('#osd-ch'); e.classList.add('show');
+  clearTimeout(showChOSD._t); showChOSD._t=setTimeout(()=>e.classList.remove('show'),5000);}
+
+/* ---- volume OSD: 16 segments, half-steps ---- */
+(function(){const b=$('#vbar'); for(let i=0;i<16;i++){const s=document.createElement('div'); s.className='vseg';
+  s.innerHTML='<i></i>'; b.appendChild(s);}})();
+function showVolOSD(){const segs=$$('#vbar .vseg'); const half=Math.round(state.vol/100*32); // 0..32 half-steps
+  segs.forEach((s,i)=>{s.classList.remove('full','half');
+    const need=half-(i*2); if(need>=2)s.classList.add('full'); else if(need===1)s.classList.add('half');});
+  const e=$('#osd-vol'); e.classList.add('show'); clearTimeout(showVolOSD._t);
+  showVolOSD._t=setTimeout(()=>e.classList.remove('show'),1800);}
+
+/* ================= GUIDE — broadcast-day programmer ================= */
+/* guide3 = { "7": { sun:[{s:startMin, d:durMin, f:fileName}], mon:[...] } } */
+const DAYS=[['sun','SUN'],['mon','MON'],['tue','TUE'],['wed','WED'],['thu','THU'],['fri','FRI'],['sat','SAT']];
+let progCh=null, progDay=DAYK[new Date().getDay()];
+function guideSave(g){store.set('guide3',g); if(state.backend)send({type:'set',key:'guide3',value:g});}
+function buildGuide(){
+  const el=$('#g-chlist'); el.innerHTML='';
+  $('#g-clock').textContent=new Date().toLocaleDateString([], {weekday:'short'}).toUpperCase()+' · '+
+    new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  chSorted().filter(c=>c.kind!=='app').forEach(c=>{
+    const d=document.createElement('div'); d.className='tv-ch'; d.setAttribute('data-focus','');
+    d.dataset.act='prog:'+c.num;
+    const sm=schedMinToday(c.num);
+    if(!c.items.length&&!sm)d.style.opacity=.45;
+    d.innerHTML=`<span class="cn">${String(c.num).padStart(2,'0')}</span><span class="cname">${c.name}</span>
+      <span class="cmeta">${c.items.length} FILES · TODAY ${(sm/60).toFixed(1)}H / 24H</span>`;
+    d.onclick=()=>activate(d); el.appendChild(d);});
+}
+const fmtT=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const fmtD=m=>(m>=60?Math.floor(m/60)+'H':'')+(m%60?String(m%60)+'M':(m>=60?'':'0M'));
+function openProgrammer(ch,day){
+  progCh=ch; progDay=day||progDay;
+  const c=chByNum(ch), g=store.get('guide3',{});
+  const blocks=((g[ch]||{})[progDay]||[]).slice().sort((a,b)=>a.s-b.s);
+  const used=blocks.reduce((a,b)=>a+b.d,0);
+  let h=`<div class="modal-title">PROGRAM CH ${String(ch).padStart(2,'0')} — ${c.name}</div>
+    <div class="prog-days">`;
+  DAYS.forEach(d=>{h+=`<div class="pday ${d[0]===progDay?'on':''}" data-focus data-act="pday:${d[0]}">${d[1]}</div>`;});
+  h+=`</div><div class="prog-free">DAY BUDGET · USED ${fmtD(used)} · FREE ${fmtD(24*60-used)}</div><div class="set-list">`;
+  if(!blocks.length) h+=`<div class="set-row"><div class="sk" style="color:var(--dim)">No programming — static all day</div></div>`;
+  blocks.forEach((b,i)=>{h+=`<div class="set-row" data-focus data-act="pdel:${i}">
+    <div><div class="sk">${fmtT(b.s)} – ${fmtT(b.s+b.d)}</div><div class="sd">${b.f}</div></div>
+    <div class="sv">${fmtD(b.d)} · ● REMOVE</div></div>`;});
+  h+=`<div class="set-row" data-focus data-act="padd"><div class="sk">＋ Add block</div><div class="sd">pick start time, then a video from this channel</div></div>
+      <div class="set-row" data-focus data-act="mclose"><div class="sk">Done</div></div></div>`;
+  openModal(h); bindModalClicks();
+}
+function progAddStart(){
+  const c=chByNum(progCh);
+  if(!c.items.length){toast('CH HAS NO FILES — ADD IN TV TAB'); return;}
+  const g=store.get('guide3',{}), blocks=((g[progCh]||{})[progDay]||[]);
+  let h=`<div class="modal-title">START TIME — ${progDay.toUpperCase()}</div><div class="osk" style="grid-template-columns:repeat(8,1fr)">`;
+  for(let m=0;m<24*60;m+=30){
+    const taken=blocks.some(b=>m<b.s+b.d&&m+1>b.s);
+    h+=`<div class="key ${taken?'taken':''}" ${taken?'':'data-focus'} data-act="pstart:${m}">${fmtT(m)}</div>`;}
+  h+=`</div><div class="set-list" style="margin-top:10px"><div class="set-row" data-focus data-act="pback"><div class="sk">Back</div></div></div>`;
+  openModal(h); bindModalClicks();
+}
+function progPickVideo(startMin){
+  const c=chByNum(progCh), g=store.get('guide3',{}), blocks=((g[progCh]||{})[progDay]||[]).slice().sort((a,b)=>a.s-b.s);
+  const next=blocks.find(b=>b.s>=startMin); const room=(next?next.s:24*60)-startMin;
+  let h=`<div class="modal-title">VIDEO — STARTS ${fmtT(startMin)} · ROOM ${fmtD(room)}</div><div class="set-list">`;
+  c.items.forEach((it,i)=>{const fits=(it.dur||30)<=room;
+    h+=`<div class="set-row" ${fits?'data-focus':''} data-act="pvid:${startMin}:${i}" ${fits?'':'style="opacity:.4"'}>
+      <div><div class="sk">${it.name}</div></div><div class="sv">${fmtD(it.dur||30)}${fits?'':' · NO ROOM'}</div></div>`;});
+  h+=`<div class="set-row" data-focus data-act="pback"><div class="sk">Back</div></div></div>`;
+  openModal(h); bindModalClicks();
+}
+function progCommit(startMin,itemIdx){
+  const c=chByNum(progCh), it=c.items[itemIdx]; if(!it)return;
+  const g=store.get('guide3',{}); g[progCh]=g[progCh]||{}; g[progCh][progDay]=g[progCh][progDay]||[];
+  g[progCh][progDay].push({s:startMin, d:it.dur||30, f:it.name});
+  guideSave(g); toast(`CH ${String(progCh).padStart(2,'0')} · ${progDay.toUpperCase()} ${fmtT(startMin)} · ${it.name}`);
+  openProgrammer(progCh);
+}
+function progDelete(i){
+  const g=store.get('guide3',{}); const arr=((g[progCh]||{})[progDay]||[]).slice().sort((a,b)=>a.s-b.s);
+  arr.splice(i,1); g[progCh][progDay]=arr; guideSave(g); openProgrammer(progCh);
+}
+
+/* ================= NAV (MapLibre + PMTiles) ================= */
+let map=null, mapFile=null, puck=null;
+function navShown(){
+  $('#nav-gpsline').textContent = gps.fix ? `GPS FIX · ${gps.sats} SATS` : 'GPS: searching…';
+  if(map||!window._vendorOK) return;
+  if(!mapFile) return; // fallback stays
+  try{
+    const proto=new pmtiles.Protocol(); maplibregl.addProtocol('pmtiles',proto.tile);
+    const css=getComputedStyle(document.body);
+    const C={bg:css.getPropertyValue('--bg').trim(),line:css.getPropertyValue('--line2').trim(),
+      pri:css.getPropertyValue('--pri').trim(),dim:css.getPropertyValue('--dim').trim()};
+    map=new maplibregl.Map({container:'map', attributionControl:false, dragRotate:false,
+      center:[-112.15,33.36], zoom:10,
+      style:{version:8, sources:{p:{type:'vector', url:'pmtiles://'+mapFile}},
+        layers:[
+          {id:'bg',type:'background',paint:{'background-color':C.bg}},
+          {id:'earth',type:'fill','source':'p','source-layer':'earth',paint:{'fill-color':C.bg}},
+          {id:'water',type:'fill','source':'p','source-layer':'water',paint:{'fill-color':'#0a1c22'}},
+          {id:'landuse',type:'fill','source':'p','source-layer':'landuse',paint:{'fill-color':'#10171a'}},
+          {id:'buildings',type:'fill','source':'p','source-layer':'buildings',paint:{'fill-color':'#151d20'}},
+          {id:'roads-minor',type:'line','source':'p','source-layer':'roads',
+            filter:['in',['get','kind'],['literal',['minor_road','other','path']]],
+            paint:{'line-color':C.line,'line-width':1}},
+          {id:'roads-major',type:'line','source':'p','source-layer':'roads',
+            filter:['in',['get','kind'],['literal',['major_road','medium_road']]],
+            paint:{'line-color':C.dim,'line-width':1.6}},
+          {id:'roads-hwy',type:'line','source':'p','source-layer':'roads',
+            filter:['==',['get','kind'],'highway'],
+            paint:{'line-color':C.pri,'line-width':2.4}},
+          {id:'boundaries',type:'line','source':'p','source-layer':'boundaries',
+            paint:{'line-color':C.line,'line-width':1,'line-dasharray':[3,2]}},
+        ]}});
+    $('#nav-fallback').style.display='none'; $('#nav-hud').style.display='block';
+    puck=new maplibregl.Marker({color:C.pri});
+  }catch(e){ toast('MAP INIT FAILED'); }
+}
+function navMaps(list){ if(list&&list.length){ mapFile=list[0].url; if($('.view.active')?.id==='v-nav') navShown(); } }
+function navGPS(){ $('#sb-gps').textContent = gps.fix?('GPS '+gps.sats):'GPS —';
+  $('#nav-gpsline').textContent = gps.fix ? `GPS FIX · ${gps.sats} SATS · ${gps.lat?.toFixed(4)}, ${gps.lon?.toFixed(4)}` : 'GPS: searching…';
+  $('#nh-gps').textContent = gps.fix?('GPS '+gps.sats+' SATS'):'GPS —';
+  if(map&&gps.fix&&puck){ puck.setLngLat([gps.lon,gps.lat]).addTo(map);
+    if(state.mapMode===false) map.easeTo({center:[gps.lon,gps.lat],duration:400}); } }
+
+/* ================= DRIVE render (change-detected) ================= */
+const dEls={soc:$('#d-soc'),range:$('#d-range'),kwh:$('#d-kwh'),fuel:$('#d-fuel'),speed:$('#d-speed'),
+  pwr:$('#d-pwr'),rpm:$('#d-rpm'),mtemp:$('#d-mtemp'),ptemp:$('#d-ptemp'),gear:$('#d-gear')};
+const dLast={};
+function setTxt(k,v){ if(dLast[k]!==v){dLast[k]=v; dEls[k].textContent=v;} }
+function renderDrive(){
+  const t=tele, on=t.source&&t.source!=='none';
+  $('#nolink').classList.toggle('hide',on);
+  $('#d-srcline').textContent='SOURCE // '+(on?t.source.toUpperCase():'—');
+  $('#d-mode').textContent='MODE // '+(t.source==='demo'?'DEMO':on?'LIVE':'—');
+  $('#sb-dot').classList.toggle('on',on);
+  $('#sb-link').textContent=on?('LINK '+t.source.toUpperCase()):'NOT CONNECTED';
+  const f=(v,d=0)=>v==null?'—':(+v).toFixed(d);
+  setTxt('speed',f(t.speed)); setTxt('soc',f(t.soc)); setTxt('fuel',f(t.fuel));
+  setTxt('pwr',t.pwr==null?'—':(t.pwr<0?'−':'')+Math.abs(Math.round(t.pwr)));
+  setTxt('rpm',f(t.rpm)); setTxt('mtemp',f(t.mtemp)); setTxt('ptemp',f(t.ptemp)); setTxt('gear',t.gear??'—');
+  const kwh=t.soc==null?null:65*t.soc/100;
+  setTxt('kwh',kwh==null?'—':kwh.toFixed(1)); setTxt('range',kwh==null?'—':Math.round(kwh*3.1));
+  $('#d-battfill').style.width=(t.soc??0)+'%';
+  const bar=$('#d-pmbar');
+  if(t.pwr==null){bar.style.width='0';}
+  else if(t.pwr>=0){bar.classList.remove('regen'); bar.style.left='35%'; bar.style.width=Math.min(65,t.pwr/150*65)+'%';}
+  else{bar.classList.add('regen'); const w=Math.min(35,Math.abs(t.pwr)/60*35); bar.style.left=(35-w)+'%'; bar.style.width=w+'%';}
+}
+
+/* ================= demo sim (only when srcmode=demo && no backend) ================= */
+let demoTimer=null;
+function demoTick(){ if(state.backend||state.srcmode!=='demo'){tele.source= state.backend?tele.source:'none'; renderDrive(); return;}
+  const t=tele; t.source='demo';
+  demoTick.ph=(demoTick.ph??0); demoTick.pt=(demoTick.pt??3)-0.25;
+  if(demoTick.pt<=0){demoTick.ph=(demoTick.ph+1)%4; demoTick.pt=[4,7,3,2][demoTick.ph];}
+  const tgt=[42,58,8,0][demoTick.ph]; t.speed=(t.speed??0)+((tgt-(t.speed??0))*0.15);
+  let p=(tgt-(t.speed??0))*3+(t.speed??0)*0.9; if(demoTick.ph===2)p=-40;
+  t.pwr=Math.max(-60,Math.min(150,p));
+  t.soc=Math.max(0,(t.soc??72)-t.pwr/3600*0.09); t.fuel=t.soc;
+  t.mtemp=35+Math.abs(t.pwr)/6; t.ptemp=27+Math.abs(t.pwr)/12; t.rpm=null;
+  t.gear=(t.speed??0)<0.5?'P':'D'; renderDrive();}
+function startDemoLoop(){clearInterval(demoTimer); demoTimer=setInterval(demoTick,250); demoTick();}
+
+/* ================= SETTINGS ================= */
+function renderSettings(){
+  const rows=[
+    {k:'Theme',d:'GOST · PERIMETR · FOSFOR · ZARYA · SIRENA · MOLOKO',v:state.theme.toUpperCase(),act:'theme'},
+    {k:'Data Source',d:'AUTO waits for OBD/telematics · DEMO simulates',v:state.srcmode.toUpperCase(),act:'srcmode'},
+    {k:'Network',d:'Wi-Fi status · scan · connect',v:netStatus,act:'wifi'},
+    {k:'CRT Scanlines',d:'Overlay on/off (off = faster)',v:state.crt?'ON':'OFF',act:'crt'},
+    {k:'CRT Shape',d:'Flat (default) or curved glass',v:state.curved?'CURVED':'FLAT',act:'curved'},
+    {k:'On-screen Controls',d:'Auto-hides when hardware detected',v:state.hwControls?'HIDDEN (HW)':'SHOWN',act:'noop'},
+    {k:'Dashcam',d:'Records ribbon camera to media/Dashcam',v:dashStatus,act:'dashcam'},
+    {k:'Update Maps',d:'Fetch latest region file (needs Wi-Fi)',v:'▸',act:'updmaps'},
+    {k:'System Update',d:'OS security updates via Wi-Fi (signed apt)',v:'▸',act:'sysupd'},
+    {k:'Reboot Interface',d:'Restart the shell',v:'↺',act:'reboot'},
+  ];
+  const el=$('#set-list'); el.innerHTML='';
+  rows.forEach(r=>{const d=document.createElement('div'); d.className='set-row'; d.setAttribute('data-focus','');
+    d.dataset.act=r.act;
+    d.innerHTML=`<div><div class="sk">${r.k}</div><div class="sd">${r.d}</div></div><div class="sv">${r.v}</div>`;
+    d.onclick=()=>activate(d); el.appendChild(d);});
+  applyFocus();
+}
+let netStatus='—', dashStatus='OFF';
+
+/* ---- wifi modal + OSK ---- */
+function openModal(html){$('#modal-box').innerHTML=html; $('#panel-modal').classList.add('on'); state.focusIdx=0; applyModalFocus();}
+function closeModal(){$('#panel-modal').classList.remove('on'); applyFocus();}
+function modalFocusables(){return [...$('#modal-box').querySelectorAll('[data-focus]')];}
+function applyModalFocus(){const f=modalFocusables(); f.forEach((e,i)=>e.classList.toggle('focused',i===state.focusIdx));
+  const c=f[state.focusIdx]; if(c)c.scrollIntoView({block:'nearest'});}
+function wifiPanel(nets,radio){
+  let h='<div class="modal-title">NETWORK — SELECT WI-FI</div><div class="set-list">';
+  (nets||[]).forEach(n=>{h+=`<div class="set-row" data-focus data-act="wpick:${encodeURIComponent(n.ssid)}">
+    <div><div class="sk">${n.ssid||'(hidden)'}</div><div class="sd">${n.sec||'open'}</div></div>
+    <div class="sv">${'▂▄▆█'.slice(0,Math.max(1,Math.round((n.sig||0)/25)))}</div></div>`;});
+  if(!nets||!nets.length){
+    const msg=!state.backend
+      ?'PREVIEW MODE — Wi-Fi control runs on the device (Pi / booted ISO), a browser page can\'t scan radios'
+      :(radio===false
+        ?'NO WI-FI RADIO on this machine (normal in a VM — it uses wired NAT). On the Pi this lists real networks'
+        :'No networks found — check antenna / move closer');
+    h+=`<div class="set-row"><div><div class="sk">Nothing to list</div><div class="sd">${msg}</div></div></div>`;}
+  h+='<div class="set-row" data-focus data-act="mclose"><div class="sk">Close</div></div></div>';
+  openModal(h); bindModalClicks();
+}
+let oskTarget=null, oskBuf='';
+function oskPanel(title,onDone){
+  oskBuf=''; oskTarget=onDone;
+  const rows='abcdefghijklmnopqrstuvwxyz0123456789'.split('');
+  let h=`<div class="modal-title">${title}</div><div class="osk-out" id="osk-out">&nbsp;</div><div class="osk">`;
+  rows.forEach(c=>h+=`<div class="key" data-focus data-act="osk:${c}">${c}</div>`);
+  ['A/a','SPACE','DEL','DONE','CANCEL'].forEach(c=>h+=`<div class="key wide" data-focus data-act="osk:${c}">${c}</div>`);
+  h+='</div>'; openModal(h); bindModalClicks();
+}
+let oskUpper=false;
+function oskKey(k){
+  if(k==='DONE'){const cb=oskTarget; closeModal(); cb&&cb(oskBuf); return;}
+  if(k==='CANCEL'){closeModal(); return;}
+  if(k==='DEL'){oskBuf=oskBuf.slice(0,-1);}
+  else if(k==='SPACE'){oskBuf+=' ';}
+  else if(k==='A/a'){oskUpper=!oskUpper;}
+  else oskBuf+=oskUpper?k.toUpperCase():k;
+  $('#osk-out').textContent=oskBuf.replace(/./g,'•')+'\u00a0';
+}
+function bindModalClicks(){modalFocusables().forEach(e=>e.onclick=()=>activate(e));}
+
+/* ================= actions ================= */
+const actions={
+  'goto':a=>setTab(TABS.findIndex(t=>t.id===a)),
+  theme:()=>{const i=THEMES.indexOf(state.theme); setTheme(THEMES[(i+1)%THEMES.length]); toast('THEME · '+state.theme.toUpperCase());},
+  crt:()=>{state.crt=!state.crt; store.set('crt',state.crt); applyBodyFlags();},
+  curved:()=>{state.curved=!state.curved; store.set('curved',state.curved); applyBodyFlags();},
+  srcmode:()=>{state.srcmode=state.srcmode==='auto'?'demo':'auto'; store.set('srcmode',state.srcmode);
+    send({type:'set',key:'srcmode',value:state.srcmode}); if(!state.backend&&state.srcmode==='auto'){tele.source='none'; renderDrive();}
+    renderSettings(); toast('DATA SOURCE · '+state.srcmode.toUpperCase());},
+  wifi:()=>{ if(state.backend){send({type:'wifi_scan'}); toast('SCANNING…');} else wifiPanel([]); },
+  'wpick':ssid=>{const s=decodeURIComponent(ssid); closeModal();
+    oskPanel('PASSWORD — '+s, psk=>{ if(state.backend)send({type:'wifi_connect',ssid:s,psk}); toast('CONNECTING '+s+'…'); });},
+  'osk':k=>oskKey(k),
+  mclose:()=>closeModal(),
+  dashcam:()=>{ if(state.backend){send({type:'dashcam_toggle'});} else {toast('DASHCAM NEEDS PI CAMERA');} },
+  updmaps:()=>{ if(state.backend){send({type:'update_maps'}); toast('MAP UPDATE STARTED');} else toast('NEEDS WI-FI ON DEVICE'); },
+  sysupd:()=>{ if(state.backend){send({type:'system_update'}); toast('SYSTEM UPDATE STARTED');} else toast('NEEDS WI-FI ON DEVICE'); },
+  reboot:()=>runBoot(),
+  noop:()=>{},
+  'tune':n=>{const c=chByNum(+n);
+    if(c&&c.kind==='files'&&!state.backend&&!c.items.length&&!schedMinToday(c.num)){
+      addTarget=c.num; fileInput.click(); return;}   // empty channel + preview → add files
+    tune(+n);},
+  'prog':n=>openProgrammer(+n),
+  'pday':d=>openProgrammer(progCh,d),
+  'padd':()=>progAddStart(),
+  'pback':()=>openProgrammer(progCh),
+  'pstart':m=>progPickVideo(+m),
+  'pvid':arg=>{const [s,i]=arg.split(':'); progCommit(+s,+i);},
+  'pdel':i=>progDelete(+i),
+  openfile:()=>{addTarget=addTarget||3; fileInput.click();},
+  yt:()=>{ if(state.backend)send({type:'launch',app:'youtube'});
+    else{ try{window.open('https://www.youtube.com/tv','_blank');}catch(e){} toast('YOUTUBE · HOLD ◀ 5s TO RETURN'); }},
+  browse:()=>{ if(state.backend)send({type:'launch',app:'browser'});
+    else{ try{window.open('https://duckduckgo.com','_blank');}catch(e){} toast('LOOKUP · HOLD ◀ 5s TO RETURN'); }},
+};
+function activate(el){const raw=el.dataset.act||''; const i=raw.indexOf(':');
+  const name=i<0?raw:raw.slice(0,i); const arg=i<0?undefined:raw.slice(i+1);
+  (actions[name]||(()=>{}))(arg);}
+
+/* ================= input ================= */
+let leftHold=null;
+function input(a){
+  const modal=$('#panel-modal').classList.contains('on');
+  if(modal){ const f=modalFocusables();
+    if(a==='up')state.focusIdx=Math.max(0,state.focusIdx-1);
+    else if(a==='down')state.focusIdx=Math.min(f.length-1,state.focusIdx+1);
+    else if(a==='left')state.focusIdx=Math.max(0,state.focusIdx-1);
+    else if(a==='right')state.focusIdx=Math.min(f.length-1,state.focusIdx+1);
+    else if(a==='enter'){const c=f[state.focusIdx]; if(c)activate(c);}
+    applyModalFocus(); return;}
+  if(state.tvOn){
+    if(a==='up')chStep(+1); else if(a==='down')chStep(-1);
+    else if(a==='enter'){ if(tvVideo.src){tvVideo.paused?tvVideo.play():tvVideo.pause();} if(state.backend)send({type:'tv_pause'});}
+    return;}
+  if(state.mapMode&&map){
+    const px=80;
+    if(a==='up')map.panBy([0,-px]); else if(a==='down')map.panBy([0,px]);
+    else if(a==='left')map.panBy([-px,0]); else if(a==='right')map.panBy([px,0]);
+    else if(a==='enter')map.zoomTo(Math.min(16,map.getZoom()+1));
+    return;}
+  if(a==='left')setTab(state.tabIndex-1);
+  else if(a==='right')setTab(state.tabIndex+1);
+  else if(a==='up'){state.focusIdx=Math.max(0,state.focusIdx-1); applyFocus();}
+  else if(a==='down'){state.focusIdx=Math.min(focusables().length-1,state.focusIdx+1); applyFocus();}
+  else if(a==='enter'){
+    if($('.view.active')?.id==='v-nav'&&map&&!state.mapMode){state.mapMode=true; $('#nh-mode').textContent='MAP MODE'; toast('MAP MODE · HOLD ◀ TO EXIT'); return;}
+    const c=focusables()[state.focusIdx]; if(c)activate(c);}
+}
+function leftDown(){ if(leftHold)return;
+  leftHold=setTimeout(()=>{ leftHold=null;
+    if(state.tvOn){tvExit(); toast('TV OFF');}
+    else if(state.mapMode){state.mapMode=false; $('#nh-mode').textContent='BROWSE'; toast('MAP MODE OFF');}
+    else if(state.backend)send({type:'kill_apps'});
+  },5000);}
+function leftUp(){ if(leftHold){clearTimeout(leftHold); leftHold=null; input('left');} }
+
+$$('.dk').forEach(k=>{const a=k.dataset.dk;
+  k.addEventListener('pointerdown',e=>{e.preventDefault(); k.classList.add('press');
+    if(a==='left')leftDown(); else input(a);});
+  k.addEventListener('pointerup',e=>{e.preventDefault(); k.classList.remove('press'); if(a==='left')leftUp();});
+  k.addEventListener('pointerleave',()=>{k.classList.remove('press'); if(a==='left'&&leftHold){clearTimeout(leftHold); leftHold=null;}});});
+const KEY={ArrowUp:'up',ArrowDown:'down',ArrowRight:'right',Enter:'enter',' ':'enter',
+  PageUp:'chup',PageDown:'chdn',Backspace:'back',MediaTrackNext:'chup',MediaTrackPrevious:'chdn'};
+addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft'){e.preventDefault(); if(!e.repeat)leftDown(); return;}
+  const a=KEY[e.key]; if(!a){ if(e.key==='t')actions.theme(); else if(e.key==='c')actions.crt(); return;}
+  e.preventDefault(); if(e.repeat)return;
+  if(a==='chup')chStep(+1); else if(a==='chdn')chStep(-1);
+  else if(a==='back'){ if(state.tvOn)tvExit(); else closeModal(); }
+  else input(a);});
+addEventListener('keyup',e=>{ if(e.key==='ArrowLeft')leftUp(); });
+
+/* ================= knobs ================= */
+function makeKnob(el,tick,valEl,key,onChange){let drag=false,lastY=0;
+  const render=()=>{const v=state[key]; tick.style.transform=`translateX(-50%) rotate(${-135+v/100*270}deg)`;
+    valEl.textContent=Math.round(v); onChange&&onChange(v);};
+  const mv=y=>{if(!drag)return; const dy=lastY-y; lastY=y;
+    state[key]=Math.max(0,Math.min(100,state[key]+dy*0.6)); store.set(key,state[key]); render();};
+  el.addEventListener('pointerdown',e=>{drag=true; lastY=e.clientY; el.setPointerCapture(e.pointerId);});
+  el.addEventListener('pointermove',e=>mv(e.clientY));
+  el.addEventListener('pointerup',()=>drag=false);
+  el.addEventListener('wheel',e=>{e.preventDefault(); state[key]=Math.max(0,Math.min(100,state[key]-Math.sign(e.deltaY)*3));
+    store.set(key,state[key]); render();},{passive:false});
+  render(); return render;}
+const renderVol=makeKnob($('#knob-vol'),$('#tick-vol'),$('#kv-vol'),'vol',v=>{tvVideo.volume=v/100; showVolOSD();});
+const renderBrt=makeKnob($('#knob-brt'),$('#tick-brt'),$('#kv-brt'),'brt',v=>{$('#dim-layer').style.opacity=((100-v)/100*0.8).toFixed(3);});
+function setPot(name,val){state[name]=Math.max(0,Math.min(100,val)); (name==='vol'?renderVol:renderBrt)();}
+
+/* ================= backend link ================= */
+let ws=null;
+function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o));}
+function connect(){
+  try{ws=new WebSocket('ws://127.0.0.1:8765');}catch(e){return;}
+  ws.onopen=()=>{state.backend=true; send({type:'set',key:'srcmode',value:state.srcmode});
+    send({type:'set',key:'guide3',value:store.get('guide3',{})});};
+  ws.onclose=()=>{state.backend=false; state.hwControls=false; applyBodyFlags();
+    tele.source=state.srcmode==='demo'?'demo':'none'; renderDrive(); setTimeout(connect,4000);};
+  ws.onerror=()=>{try{ws.close()}catch(e){}};
+  ws.onmessage=e=>{let m; try{m=JSON.parse(e.data)}catch(_){return;}
+    switch(m.type){
+      case 'hello': state.hwControls=!!m.hw; applyBodyFlags();
+        $('#hl-foot').textContent='GOST OS v2.0 · '+(m.host||'')+' · OFFLINE FIRST'; break;
+      case 'telemetry': Object.assign(tele,m.data); renderDrive(); break;
+      case 'input': if(m.action==='left_down')leftDown(); else if(m.action==='left_up')leftUp(); else input(m.action); break;
+      case 'pot': setPot(m.name,m.value); break;
+      case 'channels': channels=defaultChannels();
+        m.list.forEach(c=>{const ex=chByNum(c.num); if(ex&&ex.kind==='files'){ex.name=c.name;
+          ex.items=(c.files||[]).map(f=>({name:f.n,dur:f.d}));}});
+        renderTVList(); if($('.view.active')?.id==='v-guide')buildGuide(); break;
+      case 'tv_offair': if(state.tvOn){stopVideo(); drawStatic(true);
+        clearTimeout(offairTimer); offairTimer=setTimeout(()=>{if(state.tvOn)tune(state.tvCh);},30000);} break;
+      case 'gps': gps=Object.assign(gps,m); navGPS(); break;
+      case 'maps': navMaps(m.list); break;
+      case 'net': netStatus=m.status||'—'; $('#sb-net').textContent=(m.kind==='eth'?'ETH ':'NET ')+netStatus; renderSettings(); break;
+      case 'wifi_list': wifiPanel(m.nets,m.radio); break;
+      case 'dashcam': dashStatus=m.status; renderSettings(); toast('DASHCAM '+m.status); break;
+      case 'toast': toast(m.text); break;
+    }};
+}
+
+/* ================= boot ================= */
+const bootMsgs=[['INIT KERNEL ......................','ok'],['ROOTFS (RO OVERLAY) ..............','ok'],
+  ['INPUT / 5-WAY + POTS .............','ok'],['VEHICLE LINK SCAN ................','ok'],
+  ['TV CHANNEL SCAN ..................','ok'],['GNSS .............................','ok'],['SHELL ............................','ok']];
+function runBoot(){const b=$('#boot'),l=$('#boot-lines'); b.classList.remove('gone'); l.innerHTML=''; let i=0;
+  const iv=setInterval(()=>{if(i>=bootMsgs.length){clearInterval(iv);
+      setTimeout(()=>b.classList.add('gone'),400); return;}
+    const d=document.createElement('div'); d.innerHTML=bootMsgs[i][0]+' <span class="ok">[OK]</span>'; l.appendChild(d); i++;},220);}
+
+/* ================= init ================= */
+applyBodyFlags(); buildTabs(); buildHome(); renderTVList(); buildGuide(); renderSettings();
+setTab(0); renderDrive(); startDemoLoop(); $('#dim-layer').style.opacity=((100-state.brt)/100*0.8).toFixed(3);
+/* demo build: no backend */ runBoot();
+setTimeout(()=>toast('DEMO · TAP THE D-PAD (OR USE ARROW KEYS + ENTER) · T = THEME · TRY TV, GUIDE, SETTINGS',7000),2800);
+addEventListener('resize',()=>{ if(state.tvOn&&tvCanvas.style.display==='block'){const c=chByNum(state.tvCh);
+  if(c?.kind==='demo-bars')drawBars();}});
+</script>
+</body>
+</html>
